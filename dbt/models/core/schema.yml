@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: core
+    database: rugged-shuttle-447818-h7
+    schema: stockMarketAnalysis
+
+    tables:
+      - name: basic_stock_info_ext
+      - name: extended_stock_info_ext
+      
+      
+      

@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: staging
+    database: rugged-shuttle-447818-h7
+    schema: stockMarketAnalysis
+
+    tables:
+      - name: historical_price_data_ext
+      - name: historical_reports_ext
+      
+      
+      
