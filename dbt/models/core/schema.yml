@@ -1,12 +1,10 @@
 version: 2
 
-
-
 sources:
   - name: core
-    database: "{{ env_var('DBT_DATABASE', 'rugged-shuttle-447818-h7') }}"
-    schema: "{{ env_var('DBT_SCHEMA', 'stockMarketAnalysis') }}"
-
+    database: '{{ var("DBT_DATABASE") }}'
+    schema: '{{ var("DBT_SCHEMA") }}'
+    
     tables:
       - name: nyseInfo_ext
       - name: nasdaqInfo_ext
