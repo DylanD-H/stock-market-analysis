@@ -6,8 +6,8 @@ sources:
     schema: stockMarketAnalysis
 
     tables:
-      - name: historical_price_data_ext
-      - name: historical_reports_ext
+      - name: priceData_ext
+      - name: reports_ext
       
       
       

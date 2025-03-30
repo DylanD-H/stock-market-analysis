@@ -37,4 +37,8 @@ clean-targets:         # directories to be removed by `dbt clean`
 
 models:
   stock_market_analysis:
+    core:
+      +materialized: table
+    staging:
+      +materialized: view
 
