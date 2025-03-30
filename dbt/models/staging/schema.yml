@@ -2,8 +2,8 @@ version: 2
 
 sources:
   - name: staging
-    database: rugged-shuttle-447818-h7
-    schema: stockMarketAnalysis
+    database: '{{ var("DBT_DATABASE") }}'
+    schema: '{{ var("DBT_SCHEMA") }}'
 
     tables:
       - name: priceData_ext
