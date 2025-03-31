@@ -1,4 +1,3 @@
-
 WITH nyseInfo AS (
     SELECT 
         REPLACE(REPLACE(REPLACE(Symbol, '/', '-'), '^', '-P-'), ' ', '') AS Symbol, 

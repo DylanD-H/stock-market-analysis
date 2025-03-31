@@ -3,11 +3,13 @@
     (
         materialized='incremental',
         unique_key=['symbol', 'reportDate'],
-        incremental_strategy='merge'
+        incremental_strategy='merge',
+        partition_by={
+            'field': 'symbol',
+            'data_type': 'STRING'
+        }
     )
 }}
-
-
 
 
 WITH close_prices AS (
