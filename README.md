@@ -71,7 +71,8 @@ The dbt project consists of six models responsible for transforming and structur
 
   - Filters outliers to ensure accurate analysis.
 
-  ![image](https://github.com/user-attachments/assets/6c8c5436-3fff-40c3-bc6f-3821475c9d22)
+![image](https://github.com/user-attachments/assets/31f3500e-4c93-45f1-9d06-bc6e0f027af0)
+
 
 ## Dashboard
 The dashboard consists of four primary visualizations:
