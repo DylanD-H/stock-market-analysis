@@ -1,0 +1,215 @@
+id: Initialization
+namespace: null
+
+variables:
+
+  #Links for downloading files
+  baseURL: "https://github.com/DylanD-H/stock-analysis-data/releases/download/Initial/"
+  priceData: "priceData_historical.parquet"
+  reports: "reports_historical.parquet"
+  nyseInfo: "nyse_stock_info.csv"
+  nasdaqInfo: "nasdaq_stock_info.csv"
+
+  bucketURL: "gs://{{kv('GCP_BUCKET_NAME')}}/"
+
+
+tasks:
+
+  #Download files from GitHub repo
+  - id: extract
+    type: io.kestra.plugin.scripts.shell.Commands
+    outputFiles:
+      - "*.csv"
+      - "*.parquet"
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - wget -q "{{render(vars.baseURL)}}{{render(vars.priceData)}}"
+      - wget -q "{{render(vars.baseURL)}}{{render(vars.reports)}}"
+      - wget -q "{{render(vars.baseURL)}}{{render(vars.nyseInfo)}}"
+      - wget -q "{{render(vars.baseURL)}}{{render(vars.nasdaqInfo)}}"
+
+  #Upload files to Google Cloud Storage
+  - id: upload_to_gcs
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{outputs.extract.outputFiles | keys}}"
+    tasks:
+    - id: upload_file
+      type: io.kestra.plugin.gcp.gcs.Upload
+      from: "{{outputs.extract.outputFiles[taskrun.value]}}"
+      to: "{{render(vars.bucketURL)}}{{ taskrun.value }}"
+
+  #Create external table for historical prices of stocks
+  - id: bq_price_data
+    type: io.kestra.plugin.gcp.bigquery.Query
+    sql: |
+      CREATE OR REPLACE EXTERNAL TABLE `{{kv('GCP_PROJECT_ID')}}.{{kv('GCP_DATASET')}}.priceData_ext`
+      (
+          symbol STRING OPTIONS (description = 'The stock symbol for the company or security being traded.'), 
+          date STRING OPTIONS (description = 'The date and time when the stock data was recorded'),
+          open FLOAT64 OPTIONS (description = 'The price of the stock when the market opened for the day.'),
+          high FLOAT64 OPTIONS (description = 'The highest price reached by the stock during the trading day.'),
+          low FLOAT64 OPTIONS (description = 'The lowest price reached by the stock during the trading day'),  
+          close FLOAT64 OPTIONS (description = 'The price of the stock when the market closed for the day'),  
+          adjusted_close FLOAT64 OPTIONS (description = 'The price of the stock when the market closed for the day'),  
+          volume INTEGER OPTIONS (description = 'The total number of shares of the stock that were traded during the day'),
+          dividend_amount FLOAT64 OPTIONS (description = 'The total amount of dividends paid per share during the trading day'),
+          split_coefficient FLOAT64 OPTIONS (description = 'The number of shares a company issued for each existing share.This affects the share price but not the total value of holdings')
+      )
+      OPTIONS (
+              format = 'PARQUET',
+              uris = ['{{ render(vars.bucketURL )}}{{ render(vars.priceData) }}']
+      );      
+  
+  
+  #Create external table for historical quarterly balance sheets
+  - id: bq_reports
+    type: io.kestra.plugin.gcp.bigquery.Query
+    sql: |
+      CREATE OR REPLACE EXTERNAL TABLE `{{kv('GCP_PROJECT_ID')}}.{{kv('GCP_DATASET')}}.reports_ext`
+      ( 
+        symbol STRING OPTIONS(description = 'The stock symbol for the company or security being traded.'),
+        fiscalDateEnding STRING OPTIONS(description = 'The date on which the financial reporting period ends.'),
+        commonStockSharesOutstanding STRING OPTIONS(description = 'The total number of common shares of a company that are currently outstanding and available for trading.'),
+        totalAssets STRING OPTIONS(description = 'The total value of everything the company owns, including cash, accounts receivable, inventory, property, and equipment.'),
+        totalLiabilities STRING OPTIONS(description = 'The total amount of obligations the company owes to creditors.'),
+        cashAndCashEquivalentsAtCarryingValue STRING OPTIONS(description = 'The value of cash and cash-equivalent assets, such as money market funds, that the company holds.'),
+        retainedEarnings STRING OPTIONS(description = 'The portion of net income that is retained by the company instead of being distributed as dividends.'),
+        longTermDebt STRING OPTIONS(description = "The portion of the company's debt that is due after one year."),
+        goodwill STRING OPTIONS(description = 'An intangible asset that represents the excess amount paid for a company over its fair value at the time of acquisition.')
+      )
+      OPTIONS (
+              format = 'PARQUET',
+              uris = ['{{ render(vars.bucketURL )}}{{ render(vars.reports) }}']
+      );
+
+  #Create external table for info on stocks from the NASDAQ exchange
+  - id: bq_nasdaq_info
+    type: io.kestra.plugin.gcp.bigquery.Query
+    sql: |
+      CREATE OR REPLACE EXTERNAL TABLE `{{kv('GCP_PROJECT_ID')}}.{{kv('GCP_DATASET')}}.nasdaqInfo_ext`
+      (     
+          Symbol STRING,
+          Name STRING,
+          Last_Sale FLOAT64,
+          Net_Change FLOAT64,
+          Percent_Change FLOAT64,
+          Market_Cap FLOAT64,
+          Country STRING,
+          IPO_Year INTEGER,
+          Volume INTEGER,
+          Sector STRING,
+          Industry STRING
+      )
+      OPTIONS (
+              format = 'CSV',
+              uris = ['{{ render(vars.bucketURL )}}{{ render(vars.nasdaqInfo) }}'],
+              skip_leading_rows = 1,
+              ignore_unknown_values = TRUE
+      );
+
+  #Create external table for info on stocks from the NYSE exchange
+  - id: bq_nyse_info
+    type: io.kestra.plugin.gcp.bigquery.Query
+    sql: |
+      CREATE OR REPLACE EXTERNAL TABLE `{{kv('GCP_PROJECT_ID')}}.{{kv('GCP_DATASET')}}.nyseInfo_ext`
+      (     
+          Symbol STRING,
+          Name STRING,
+          Last_Sale FLOAT64,
+          Net_Change FLOAT64,
+          Percent_Change FLOAT64,
+          Market_Cap FLOAT64,
+          Country STRING,
+          IPO_Year INTEGER,
+          Volume INTEGER,
+          Sector STRING,
+          Industry STRING
+      )
+      OPTIONS (
+              format = 'CSV',
+              uris = ['{{ render(vars.bucketURL )}}{{ render(vars.nyseInfo) }}'],
+              skip_leading_rows = 1,
+              ignore_unknown_values = TRUE
+      );
+
+  #Sync with GitHub repo to get dbt models
+  - id: sync
+    type: io.kestra.plugin.git.SyncNamespaceFiles
+    url: https://github.com/DylanD-H/stock-market-analysis
+    branch: main
+    namespace: "{{flow.namespace}}"
+    gitDirectory: dbt
+    delete: true
+    dryRun: false
+    disabled: false
+
+  #Build the full dbt project
+  - id: dbt-build
+    type: io.kestra.plugin.dbt.cli.DbtCLI
+    env:
+      DBT_DATABASE: "{{kv('GCP_PROJECT_ID')}}"
+      DBT_SCHEMA: "{{kv('GCP_DATASET')}}"
+    namespaceFiles:
+      enabled: true
+    containerImage: ghcr.io/kestra-io/dbt-bigquery:latest
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    inputFiles:
+      sa.json: "{{kv('GCP_CREDS')}}"
+
+    commands:
+      - dbt deps
+      - dbt build --vars '{"file_name":"{{ render(vars.priceData) }}","DBT_DATABASE":"{{ kv('GCP_PROJECT_ID') }}","DBT_SCHEMA":"{{ kv('GCP_DATASET') }}"}'
+
+    storeManifest:
+      key: manifest.json
+      namespace: "{{ flow.namespace }}"
+    profiles: |
+      default:
+        target: dev
+        outputs:
+          dev:
+            type: bigquery
+            method: service-account
+            project: {{kv('GCP_PROJECT_ID')}}
+            dataset: {{kv('GCP_DATASET')}}
+            keyfile: sa.json
+
+  #Delete tables that are no longer needed
+  - id: delete_NASDAQ_table
+    type: io.kestra.plugin.gcp.bigquery.DeleteTable
+    projectId: "{{kv('GCP_PROJECT_ID')}}"
+    dataset: "{{kv('GCP_DATASET')}}"
+    table: nasdaqInfo_ext
+
+  - id: delete_NYSE_table
+    type: io.kestra.plugin.gcp.bigquery.DeleteTable
+    projectId: "{{kv('GCP_PROJECT_ID')}}"
+    dataset: "{{kv('GCP_DATASET')}}"
+    table: nyseInfo_ext
+
+
+  #Purge execution files
+  - id: purge_files
+    type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles
+
+#Set defaults for GCP credentials and info
+pluginDefaults:
+  - type: io.kestra.plugin.gcp
+    values:
+      serviceAccount: "{{kv('GCP_CREDS')}}"
+      projectId: "{{kv('GCP_PROJECT_ID')}}"
+      location: "{{kv('GCP_LOCATION')}}"
+      bucket: "{{kv('GCP_BUCKET_NAME')}}"
+
+#Trigger this flow on successful creation of GCS bucket and BigQuery dataset
+triggers:
+  - id: trigger_on_GCP_Infrastructure_success
+    type: io.kestra.plugin.core.trigger.Flow
+    preconditions:
+      id: flow_trigger
+      flows:
+        - namespace: stockmarketanalysis
+          flowId: GCP_Infrastructure
+          states: [SUCCESS]
