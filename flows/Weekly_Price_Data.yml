@@ -1,0 +1,123 @@
+id: Weekly_Price_Data
+namespace: stockmarketanalysis
+
+variables:
+
+  #Links for downloading files
+  baseURL: "https://github.com/DylanD-H/stock-analysis-data/releases/download/Weekly/"
+  fileName: "priceData_{{ trigger.date | date('yyyy-MM-dd') }}.parquet"
+
+  bucketURL: "gs://{{kv('GCP_BUCKET_NAME')}}/"
+
+
+tasks:
+  - id: set_label
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      file: "{{ render(vars.fileName )}}"
+      date: "{{ trigger.date | date('yyyy-MM-dd') }}"
+
+  #Download file from GitHub repo based on the date that the flow was triggered
+  - id: extract
+    type: io.kestra.plugin.scripts.shell.Commands
+    outputFiles:
+      - "*.parquet"
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - wget -q "{{render(vars.baseURL)}}{{render(vars.fileName)}}"
+
+  #Upload file to Google Cloud Storage
+  - id: upload_to_gcs
+    type: io.kestra.plugin.gcp.gcs.Upload
+    from: "{{ outputs.extract.outputFiles[render(vars.fileName)] }}"
+    to: "{{ render(vars.bucketURL) }}{{ render(vars.fileName) }}"
+
+  #Create external table for past week of stock prices
+  - id: bq_price_data
+    type: io.kestra.plugin.gcp.bigquery.Query
+    sql: |
+      CREATE OR REPLACE EXTERNAL TABLE `{{ kv('GCP_PROJECT_ID') }}.{{ kv('GCP_DATASET') }}.priceData_ext`
+      (
+          symbol STRING OPTIONS (description = 'The stock symbol for the company or security being traded.'), 
+          date STRING OPTIONS (description = 'The date and time when the stock data was recorded'),
+          open FLOAT64 OPTIONS (description = 'The price of the stock when the market opened for the day.'),
+          high FLOAT64 OPTIONS (description = 'The highest price reached by the stock during the trading day.'),
+          low FLOAT64 OPTIONS (description = 'The lowest price reached by the stock during the trading day'),  
+          close FLOAT64 OPTIONS (description = 'The price of the stock when the market closed for the day'),  
+          adjusted_close FLOAT64 OPTIONS (description = 'The price of the stock when the market closed for the day'),  
+          volume INTEGER OPTIONS (description = 'The total number of shares of the stock that were traded during the day'),
+          dividend_amount FLOAT64 OPTIONS (description = 'The total amount of dividends paid per share during the trading day'),
+          split_coefficient FLOAT64 OPTIONS (description = 'The number of shares a company issued for each existing share.This affects the share price but not the total value of holdings')
+      )
+      OPTIONS (
+              format = 'PARQUET',
+              uris = ['{{ render(vars.bucketURL )}}{{ render(vars.fileName) }}']
+      );
+
+  #Sync with GitHub repo to ensure dbt models are up to date
+  - id: sync
+    type: io.kestra.plugin.git.SyncNamespaceFiles
+    url: https://github.com/DylanD-H/stock-market-analysis
+    branch: main
+    namespace: "{{flow.namespace}}"
+    gitDirectory: dbt
+    delete: true
+    dryRun: false
+    disabled: false
+
+  #Build the fct_priceData table and everything downstream in the dbt project
+  - id: dbt-build
+    type: io.kestra.plugin.dbt.cli.DbtCLI
+    env:
+      DBT_DATABASE: "{{kv('GCP_PROJECT_ID')}}"
+      DBT_SCHEMA: "{{kv('GCP_DATASET')}}"
+    namespaceFiles:
+      enabled: true
+    containerImage: ghcr.io/kestra-io/dbt-bigquery:latest
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    inputFiles:
+      sa.json: "{{kv('GCP_CREDS')}}"
+
+    commands:
+      - dbt deps
+      - dbt build --select fct_priceData+ --vars '{"file_name":"{{ render(vars.fileName) }}","DBT_DATABASE":"{{ kv('GCP_PROJECT_ID') }}","DBT_SCHEMA":"{{ kv('GCP_DATASET') }}"}'
+
+    storeManifest:
+      key: manifest.json
+      namespace: "{{ flow.namespace }}"
+    profiles: |
+      default:
+        target: dev
+        outputs:
+          dev:
+            type: bigquery
+            method: service-account
+            project: {{kv('GCP_PROJECT_ID')}}
+            dataset: {{kv('GCP_DATASET')}}
+            keyfile: sa.json
+
+  #Purge execution files
+  - id: purge_files
+    type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles
+
+#Set defaults for GCP credentials and info
+pluginDefaults:
+  - type: io.kestra.plugin.gcp
+    values:
+      serviceAccount: "{{ kv('GCP_CREDS') }}"
+      projectId: "{{ kv('GCP_PROJECT_ID') }}"
+      location: "{{ kv('GCP_LOCATION') }}"
+      bucket: "{{ kv('GCP_BUCKET_NAME') }}"
+
+#Trigger this flow every Saturday at 8:00AM UTC
+triggers:
+  - id: schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 8 * * SAT"
+
+
+
+
+
