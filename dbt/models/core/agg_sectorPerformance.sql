@@ -21,7 +21,6 @@ sector_data AS (
         pd.symbol,
         pd.prev_close,
         pd.close,
-        pd.daily_price_change,
         lr.market_cap
     FROM {{ ref('fct_priceData') }} pd
     JOIN {{ ref('dim_stockInfo') }} si
